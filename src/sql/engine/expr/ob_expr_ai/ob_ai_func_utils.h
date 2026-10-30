@@ -236,6 +236,11 @@ public:
   ObAIFuncJsonUtils() {}
   virtual ~ObAIFuncJsonUtils() {}
   static bool ob_is_json_array_all_str(ObJsonArray* json_array);
+  // Turn an OpenAI-compatible embeddings "data" array into the ordered array of
+  // embeddings, restoring the original input order from each entry's "index".
+  static int build_ordered_embedding_array(ObIAllocator &allocator,
+                                           ObJsonArray *data_array,
+                                           ObJsonArray *result_array);
   static int transform_array_to_json_array(ObIAllocator &allocator, ObArray<ObString> &contents, ObJsonArray *&array);
   static int get_json_object(ObIAllocator &allocator, ObJsonObject *&obj_node);
   static int get_json_array(ObIAllocator &allocator, ObJsonArray *&array_node);
