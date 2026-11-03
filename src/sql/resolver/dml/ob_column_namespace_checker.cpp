@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "ob_column_namespace_checker.h"
 #include "sql/resolver/dml/ob_dml_resolver.h"
+#include "sql/engine/basic/ob_file_sql_op.h"
 
 namespace oceanbase
 {
@@ -324,6 +325,18 @@ int ObColumnNamespaceChecker::check_column_exists(const TableItem &table_item, c
                                                                 params_,
                                                                 col_name,
                                                                 is_exist))) {
+    }
+  } else if (table_item.is_file_sql_table()) {
+    is_exist = false;
+    if (OB_ISNULL(table_item.file_sql_def_)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      for (int64_t i = 0; i < table_item.file_sql_def_->col_cnt_; ++i) {
+        if (ObCharset::case_insensitive_equal(table_item.file_sql_def_->cols_[i].name_, col_name)) {
+          is_exist = true;
+          break;
+        }
+      }
     }
   } else if (table_item.is_values_table()) {
     ObSEArray<ObColumnRefRawExpr *, 4> values_desc;

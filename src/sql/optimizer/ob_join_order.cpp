@@ -5958,6 +5958,11 @@ bool oceanbase::sql::Path::is_function_table_path() const
   return NULL != parent_ && parent_->get_type() == FUNCTION_TABLE_ACCESS;
 }
 
+bool oceanbase::sql::Path::is_file_sql_path() const
+{
+  return NULL != parent_ && parent_->get_type() == FILE_SQL_TABLE_ACCESS;
+}
+
 bool oceanbase::sql::Path::is_json_table_path() const
 {
   return NULL != parent_ && parent_->get_type() == JSON_TABLE_ACCESS;
@@ -6751,6 +6756,24 @@ int FunctionTablePath::estimate_cost()
   op_cost_ = 1.0;
   cost_ = 1.0;
   return  ret;
+}
+
+int FileSqlPath::assign(const FileSqlPath &other, common::ObIAllocator *allocator)
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(Path::assign(other, allocator))) {
+  } else {
+    table_id_ = other.table_id_;
+  }
+  return ret;
+}
+
+int FileSqlPath::estimate_cost()
+{
+  int ret = OB_SUCCESS;
+  op_cost_ = 1.0;
+  cost_ = 1.0;
+  return ret;
 }
 
 int JsonTablePath::assign(const JsonTablePath &other, common::ObIAllocator *allocator)
@@ -8331,6 +8354,8 @@ int ObJoinOrder::init_base_join_order(const TableItem *table_item)
       set_type(FAKE_CTE_TABLE_ACCESS);
     } else if (table_item->is_function_table()) {
       set_type(FUNCTION_TABLE_ACCESS);
+    } else if (table_item->is_file_sql_table()) {
+      set_type(FILE_SQL_TABLE_ACCESS);
     } else if (table_item->is_json_table()) {
       set_type(JSON_TABLE_ACCESS);
     } else if (table_item->is_values_table()) {
@@ -8351,6 +8376,8 @@ int ObJoinOrder::generate_base_paths()
     ret = generate_cte_table_paths();
   } else if (FUNCTION_TABLE_ACCESS == get_type()) {
     ret = generate_function_table_paths();
+  } else if (FILE_SQL_TABLE_ACCESS == get_type()) {
+    ret = generate_file_sql_paths();
   } else if (JSON_TABLE_ACCESS == get_type()) {
     ret = generate_json_table_paths();
   } else if (TEMP_TABLE_ACCESS == get_type()) {
@@ -8493,6 +8520,42 @@ int ObJoinOrder::generate_json_table_default_val(ObIArray<ObExecParamRawExpr *> 
         if (OB_FAIL(nl_param.push_back(t_nl_param.at(i)))) {
         }
       }
+    }
+  }
+  return ret;
+}
+
+int ObJoinOrder::generate_file_sql_paths()
+{
+  int ret = OB_SUCCESS;
+  FileSqlPath *path = NULL;
+  const ObDMLStmt *stmt = NULL;
+  const TableItem *table_item = NULL;
+  if (OB_ISNULL(get_plan()) || OB_ISNULL(stmt = get_plan()->get_stmt()) || OB_ISNULL(allocator_)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_ISNULL(table_item = stmt->get_table_item_by_id(table_id_))
+             || !table_item->is_file_sql_table()
+             || OB_ISNULL(table_item->file_sql_def_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_ISNULL(path = reinterpret_cast<FileSqlPath *>(allocator_->alloc(sizeof(FileSqlPath))))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else {
+    path = new (path) FileSqlPath();
+    path->table_id_ = table_id_;
+    path->parent_ = this;
+    output_rows_ = table_item->file_sql_def_->row_count_ > 0
+                       ? static_cast<double>(table_item->file_sql_def_->row_count_) : 1.0;
+    output_row_size_ = 64.0 * table_item->file_sql_def_->col_cnt_;
+    path->strong_sharding_ = get_plan()->get_optimizer_context().get_match_all_sharding();
+    if (OB_FAIL(path->set_parallel_info_for_match_all())) {
+    } else if (OB_FAIL(ObOptimizerUtil::classify_subquery_exprs(get_restrict_infos(),
+                                                                path->subquery_exprs_,
+                                                                path->filter_,
+                                                                false))) {
+    } else if (OB_FAIL(path->estimate_cost())) {
+    } else if (OB_FAIL(path->compute_pipeline_info())) {
+    } else if (OB_FAIL(create_plan_for_path_with_subq(path))) {
+    } else if (OB_FAIL(add_path(path))) {
     }
   }
   return ret;
@@ -15381,6 +15444,18 @@ int ObJoinOrder::copy_path(const Path& src_path, Path* &dst_path)
       if (OB_FAIL(new_access_path->assign(access_path, allocator_))) {
       } else {
         dst_path = new_access_path;
+      }
+    }
+  } else if (src_path.is_file_sql_path()) {
+    const FileSqlPath &file_path = static_cast<const FileSqlPath &>(src_path);
+    FileSqlPath *new_path = NULL;
+    if (OB_ISNULL(new_path = reinterpret_cast<FileSqlPath *>(allocator_->alloc(sizeof(FileSqlPath))))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      new_path = new (new_path) FileSqlPath();
+      if (OB_FAIL(new_path->assign(file_path, allocator_))) {
+      } else {
+        dst_path = new_path;
       }
     }
   } else if (src_path.is_function_table_path()) {

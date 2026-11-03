@@ -15,8 +15,10 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include <string.h>
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
+#include "sql/engine/basic/ob_file_sql_op.h"
 #include "sql/resolver/dml/ob_view_table_resolver.h"
 #include "sql/optimizer/ob_optimizer_util.h"
 #include "sql/resolver/dml/ob_default_value_utils.h"
@@ -624,7 +626,8 @@ int ObDMLResolver::check_column_json_type(ParseNode *tab_col, bool &is_json_cst,
           ret = OB_INVALID_ARGUMENT;
         } else if (FALSE_IT(column_expr = the_col_item.get_expr())) {
         } else if (table_item->is_json_table() || table_item->is_temp_table()
-                    || table_item->is_generated_table() || table_item->is_function_table()) {
+                    || table_item->is_generated_table() || table_item->is_function_table()
+                    || table_item->is_file_sql_table()) {
           if (only_is_json > 0) {
             ObColumnRefRawExpr* col_expr = the_col_item.get_expr();
             if (OB_NOT_NULL(col_expr)) {
@@ -926,6 +929,9 @@ int ObDMLResolver::get_target_column_list(ObSEArray<ColumnItem, 4> &target_list,
         }
       } else if (tmp_table_item->is_function_table()) {
         if (OB_FAIL(resolve_function_table_column_item(*tmp_table_item, column_items))) {
+        }
+      } else if (tmp_table_item->is_file_sql_table()) {
+        if (OB_FAIL(resolve_file_sql_columns(*tmp_table_item, column_items))) {
         }
       } else if (tmp_table_item->is_json_table()) {
         if (OB_FAIL(resolve_json_table_column_all_items(*tmp_table_item, column_items))) {
@@ -2719,6 +2725,11 @@ int ObDMLResolver::resolve_table(const ParseNode &parse_tree,
         }
         break;
       }
+      case T_FILE_SQL_TABLE: {
+        if (OB_FAIL(resolve_file_sql_table_item(*table_node, table_item))) {
+        }
+        break;
+      }
       case T_VALUES_TABLE_EXPRESSION: {
         if (OB_FAIL(resolve_values_table_item(*table_node, table_item))) {
         }
@@ -3082,6 +3093,13 @@ int ObDMLResolver::resolve_single_table_column_item(const TableItem &table_item,
     }
   } else if (table_item.is_json_table()) {
     if (OB_FAIL(resolve_json_table_column_item(table_item, column_name, col_item))) {
+    }
+  } else if (table_item.is_file_sql_table()) {
+    if (OB_ISNULL(col_item = stmt->get_column_item(table_item.table_id_, column_name))) {
+      ret = OB_ERR_BAD_FIELD_ERROR;
+      ObString scope_name = ObString::make_string(get_scope_name(T_FIELD_LIST_SCOPE));
+      LOG_USER_ERROR(OB_ERR_BAD_FIELD_ERROR, column_name.length(), column_name.ptr(),
+                     scope_name.length(), scope_name.ptr());
     }
   } else if (table_item.is_values_table()) {
     if (OB_ISNULL(col_item = stmt->get_column_item(table_item.table_id_, column_name))) {
@@ -8371,6 +8389,15 @@ int ObDMLResolver::get_columns_from_table_item(const TableItem *table_item, ObIA
     OZ (ObResolverUtils::get_all_function_table_column_names(*table_item,
                                                              params_,
                                                              column_names));
+  } else if (table_item->is_file_sql_table()) {
+    if (OB_ISNULL(table_item->file_sql_def_)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      for (int64_t i = 0; OB_SUCC(ret) && i < table_item->file_sql_def_->col_cnt_; ++i) {
+        if (OB_FAIL(column_names.push_back(table_item->file_sql_def_->cols_[i].name_))) {
+        }
+      }
+    }
   } else if (table_item->is_basic_table() || table_item->is_fake_cte_table()) {
     /**
      * LINK_TABLE and CTE_TABLE is same as BASIC_TABLE or ALIAS_TABLE

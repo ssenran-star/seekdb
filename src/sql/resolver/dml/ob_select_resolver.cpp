@@ -1651,6 +1651,9 @@ int ObSelectResolver::expand_target_list(
   } else if (table_item.is_function_table()) {
     if (OB_FAIL(resolve_all_function_table_columns(table_item, &column_items))) {
     }
+  } else if (table_item.is_file_sql_table()) {
+    if (OB_FAIL(resolve_file_sql_columns(table_item, column_items))) {
+    }
   } else if (table_item.is_json_table()) {
     if (OB_FAIL(resolve_all_json_table_columns(table_item, &column_items))) {
     }
@@ -3048,7 +3051,7 @@ int ObSelectResolver::resolve_into_outfile_without_format(const ParseNode *node,
                                                           ObSelectIntoItem &into_item)
 {
   int ret = OB_SUCCESS;
-  if (node->num_child_ != 5) {
+  if (node->num_child_ < 5) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_FAIL(resolve_into_const_node(node->children_[0], into_item.outfile_name_))) {
   }
@@ -3078,6 +3081,21 @@ int ObSelectResolver::resolve_into_outfile_without_format(const ParseNode *node,
     if (OB_FAIL(resolve_into_file_node(node->children_[4], into_item))) {
     }
   }
+  if (OB_SUCC(ret) && node->num_child_ > 5 && OB_NOT_NULL(node->children_[5])) {
+    into_item.file_sql_header_ = (0 != node->children_[5]->value_);
+  }
+  if (OB_SUCC(ret) && node->num_child_ > 6 && OB_NOT_NULL(node->children_[6])
+      && OB_NOT_NULL(node->children_[6]->str_value_)) {
+    into_item.file_sql_nullstr_.assign_ptr(node->children_[6]->str_value_,
+                                           static_cast<int32_t>(node->children_[6]->str_len_));
+  }
+  if (OB_SUCC(ret) && node->num_child_ > 7 && OB_NOT_NULL(node->children_[7])
+      && OB_NOT_NULL(node->children_[7]->str_value_)) {
+    if (0 != strncasecmp(node->children_[7]->str_value_, "csv", node->children_[7]->str_len_)) {
+      ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "COPY format other than CSV");
+    }
+  }
   return ret;
 }
 
@@ -3104,7 +3122,16 @@ int ObSelectResolver::resolve_into_clause(const ParseNode *node)
     } else {
       new(into_item) ObSelectIntoItem();
       into_item->into_type_ = node->type_;
-      if (T_INTO_OUTFILE == node->type_) { // into outfile
+      if (1 == node->value_) {
+        bool enabled = false;
+        if (OB_FAIL(session_info_->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, enabled))) {
+        } else if (!enabled) {
+          ret = OB_NOT_SUPPORTED;
+          LOG_USER_ERROR(OB_NOT_SUPPORTED, "COPY (set enable_file_sql = ON)");
+        }
+      }
+      if (OB_FAIL(ret)) {
+      } else if (T_INTO_OUTFILE == node->type_) { // into outfile
         if (is_in_set_query()) {
           ret = OB_INAPPROPRIATE_INTO;
         } else if (node->num_child_ == 3 && NULL != node->children_[1]
@@ -3128,6 +3155,40 @@ int ObSelectResolver::resolve_into_clause(const ParseNode *node)
         }
       } else {
         //do nothing
+      }
+      if (OB_SUCC(ret) && into_item->file_sql_header_) {
+        ObSqlString hdr;
+        for (int64_t i = 0; OB_SUCC(ret) && i < select_stmt->get_select_item_size(); ++i) {
+          const SelectItem &item = select_stmt->get_select_item(i);
+          ObString name = item.alias_name_.empty() ? item.expr_name_ : item.alias_name_;
+          bool quote = false;
+          for (int32_t c = 0; c < name.length(); ++c) {
+            char ch = name.ptr()[c];
+            if (',' == ch || '"' == ch || '\n' == ch || '\r' == ch) {
+              quote = true;
+            }
+          }
+          if (i > 0 && OB_FAIL(hdr.append(","))) {
+          } else if (quote && OB_FAIL(hdr.append("\""))) {
+          }
+          for (int32_t c = 0; OB_SUCC(ret) && c < name.length(); ++c) {
+            char ch = name.ptr()[c];
+            if ('"' == ch && OB_FAIL(hdr.append("\"\""))) {
+            } else if ('"' != ch && OB_FAIL(hdr.append(&ch, 1))) {
+            }
+          }
+          if (OB_SUCC(ret) && quote && OB_FAIL(hdr.append("\""))) {
+          }
+        }
+        if (OB_SUCC(ret)) {
+          ret = ob_write_string(*allocator_, ObString(hdr.length(), hdr.ptr()),
+                                into_item->file_sql_header_line_);
+        }
+      }
+      if (OB_SUCC(ret) && OB_NOT_NULL(into_item->file_sql_nullstr_.ptr())) {
+        // The COPY option node lives in the parse tree; session memory must own the text.
+        ret = ob_write_string(*allocator_, into_item->file_sql_nullstr_,
+                              into_item->file_sql_nullstr_);
       }
       if (OB_SUCC(ret)) {
         select_stmt->set_select_into(into_item);

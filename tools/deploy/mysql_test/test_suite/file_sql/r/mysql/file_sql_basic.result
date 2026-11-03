@@ -38,3 +38,30 @@ id	name	score
 1	Alice	98.5
 2	Bob	87
 3	Chen	90.25
+# CSV type inference for numbers, text, booleans and temporal columns
+column_name	column_type	null	key	default	extra
+i	BIGINT	NO	NULL	NULL	NULL
+f	DOUBLE	NO	NULL	NULL	NULL
+s	VARCHAR	NO	NULL	NULL	NULL
+b	BOOLEAN	NO	NULL	NULL	NULL
+d	DATE	YES	NULL	NULL	NULL
+dt	DATETIME	YES	NULL	NULL	NULL
+i	f	s	b	d	dt
+1	1.5	abc	1	2026-01-02	2026-01-02 03:04:05
+-2	2	x	0	2026-01-03	2026-01-03 04:05:06
+3	3.25	y	1	NULL	NULL
+# SQL filter, aggregate and sort on a single file
+name	score
+Alice	98.5
+Chen	90.25
+active	cnt	top_score
+0	1	87
+1	2	98.5
+# two-file JOIN with explicit table aliases
+id	name	tag
+1	Alice	gold
+2	Bob	silver
+# alias-free file tables still work
+c
+3
+# files outside secure_file_priv are rejected when it is restricted

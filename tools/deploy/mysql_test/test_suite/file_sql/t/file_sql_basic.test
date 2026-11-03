@@ -63,6 +63,43 @@ eval select id, name, score
        from read_csv('$FILE_SQL_DATA_DIR/export.csv')
       order by id;
 
+--echo # CSV type inference for numbers, text, booleans and temporal columns
+eval describe select * from read_csv('$FILE_SQL_DATA_DIR/types.csv');
+eval select i, f, s, b, d, dt
+       from read_csv('$FILE_SQL_DATA_DIR/types.csv') t
+      order by i;
+
+--echo # SQL filter, aggregate and sort on a single file
+eval select name, score
+       from read_csv('$FILE_SQL_DATA_DIR/basic.csv')
+      where score >= 90
+      order by score desc;
+eval select active, count(*) AS cnt, max(score) AS top_score
+       from read_csv('$FILE_SQL_DATA_DIR/basic.csv')
+      group by active
+      order by active;
+
+--echo # two-file JOIN with explicit table aliases
+eval select f.id, f.name, e.tag
+       from read_csv('$FILE_SQL_DATA_DIR/basic.csv') AS f
+       join read_csv('$FILE_SQL_DATA_DIR/extra.csv') AS e
+         on f.id = e.id
+      order by f.id;
+
+--echo # alias-free file tables still work
+eval select count(*) AS c from read_csv('$FILE_SQL_DATA_DIR/extra.csv');
+
+--echo # files outside secure_file_priv are rejected when it is restricted
+--disable_query_log
+set global secure_file_priv = '/etc';
+--enable_query_log
+--disable_result_log
+eval select * from read_csv('$FILE_SQL_DATA_DIR/basic.csv');
+--enable_result_log
+--disable_query_log
+set global secure_file_priv = '/';
+--enable_query_log
+
 set session enable_file_sql = OFF;
 --enable_query_log
 

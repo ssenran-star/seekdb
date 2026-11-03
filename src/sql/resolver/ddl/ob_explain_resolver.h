@@ -47,6 +47,15 @@ namespace sql
     }
   };
 
+  // DESCRIBE <select> returns DuckDB-style column metadata instead of an explain plan.
+  class ObDescribeQueryResolver : public ObDMLResolver
+  {
+  public:
+    ObDescribeQueryResolver(ObResolverParams &params) : ObDMLResolver(params) {}
+    virtual ~ObDescribeQueryResolver() {}
+    virtual int resolve(const ParseNode &parse_tree);
+  };
+
 }
 }
 #endif

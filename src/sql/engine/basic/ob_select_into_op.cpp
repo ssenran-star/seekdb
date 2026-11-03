@@ -38,7 +38,7 @@ OB_SERIALIZE_MEMBER(ObSelectIntoOpInput, task_id_, sqc_id_);
 OB_SERIALIZE_MEMBER((ObSelectIntoSpec, ObOpSpec), into_type_, user_vars_, outfile_name_,
     field_str_, line_str_, closed_cht_, is_optional_, select_exprs_, is_single_, max_file_size_,
     escaped_cht_, cs_type_, parallel_, buffer_size_, is_overwrite_,
-    external_properties_);
+    external_properties_, file_sql_header_line_, file_sql_nullstr_);
 
 
 int ObSelectIntoOp::inner_open()
@@ -200,6 +200,8 @@ int ObSelectIntoOp::inner_get_next_row()
       && T_INTO_VARIABLES != into_type
       && OB_FAIL(create_the_only_data_writer(data_writer))) {
   }
+  if (OB_SUCC(ret) && T_INTO_OUTFILE == into_type && OB_FAIL(write_file_sql_header(data_writer))) {
+  }
   while (OB_SUCC(ret) && row_count < top_limit_cnt_) {
     clear_evaluated_flag();
     if (OB_FAIL(child_->get_next_row())) {
@@ -253,6 +255,7 @@ int ObSelectIntoOp::inner_get_next_batch(const int64_t max_row_cnt)
     if (OB_FAIL(create_the_only_data_writer(data_writer))) {
     } else if (OB_ISNULL(data_writer)) {
       ret = OB_ERR_UNEXPECTED;
+    } else if (T_INTO_OUTFILE == into_type && OB_FAIL(write_file_sql_header(data_writer))) {
     }
   }
 
@@ -917,10 +920,39 @@ int ObSelectIntoOp::print_lob_field(const ObObj &obj,
   return ret;
 }
 
+int ObSelectIntoOp::write_file_sql_header(ObExternalFileWriter *data_writer)
+{
+  int ret = OB_SUCCESS;
+  if (file_sql_header_written_ || MY_SPEC.file_sql_header_line_.empty()) {
+  } else if (OB_ISNULL(data_writer)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    ObCsvFileWriter *csv = static_cast<ObCsvFileWriter *>(data_writer);
+    ObObj header;
+    ObObj nl;
+    header.set_varchar(MY_SPEC.file_sql_header_line_);
+    header.set_collation_type(cs_type_);
+    nl.set_varchar("\n");
+    nl.set_collation_type(cs_type_);
+    if (OB_FAIL(write_obj_to_file(header, *csv, false))) {
+    } else if (OB_FAIL(write_obj_to_file(nl, *csv, false))) {
+    } else {
+      file_sql_header_written_ = true;
+    }
+  }
+  return ret;
+}
+
 int ObSelectIntoOp::print_field(const ObObj &obj, ObCsvFileWriter &data_writer)
 {
   int ret = OB_SUCCESS;
   char char_n = 'N';
+  if (obj.is_null() && !MY_SPEC.file_sql_nullstr_.empty()) {
+    ObObj ns;
+    ns.set_varchar(MY_SPEC.file_sql_nullstr_);
+    ns.set_collation_type(cs_type_);
+    return write_obj_to_file(ns, data_writer, false);
+  }
   const bool need_enclose = has_enclose_ && !obj.is_null()
                             && (!is_optional_ || obj.is_string_type() || obj.is_collection_sql_type()
                                 || obj.is_json() || obj.is_geometry() || obj.is_date()
