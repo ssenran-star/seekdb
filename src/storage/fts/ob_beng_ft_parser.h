@@ -35,16 +35,23 @@ public:
 public:
   explicit ObBEngFTParser(common::ObIAllocator &allocator)
     : allocator_(allocator),
+      token_alloc_(&allocator),
       analysis_ctx_(),
       english_analyzer_(),
       doc_(),
       token_stream_(nullptr),
-      is_inited_(false)
+      is_inited_(false),
+      pooled_(false)
   {}
   ~ObBEngFTParser() { reset(); }
 
   int init(ObFTParserParam *param);
+  int reuse(ObFTParserParam *param);
   void reset();
+  void set_pooled(const bool pooled) { pooled_ = pooled; }
+  bool is_pooled() const { return pooled_; }
+  bool inited() const { return is_inited_; }
+  const ObCharsetInfo *text_charset() const { return analysis_ctx_.cs_; }
   virtual int get_next_token(
       const char *&word,
       int64_t &word_len,
@@ -58,11 +65,14 @@ private:
       share::ObITokenStream *&token_stream);
 private:
   common::ObIAllocator &allocator_;
+  // Copies returned to the caller. Separate from allocator_, which owns the analyzer.
+  common::ObIAllocator *token_alloc_;
   share::ObTextAnalysisCtx analysis_ctx_;
   share::ObEnglishTextAnalyzer english_analyzer_;
   common::ObDatum doc_;
   share::ObITokenStream *token_stream_;
   bool is_inited_;
+  bool pooled_;
 
   DISALLOW_COPY_AND_ASSIGN(ObBEngFTParser);
 };

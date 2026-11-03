@@ -19,6 +19,7 @@
 
 #include "lib/allocator/page_arena.h"
 #include "lib/hash/ob_hashmap.h"
+#include "lib/list/ob_list.h"
 #include "lib/utility/ob_macro_utils.h"
 #include "storage/fts/ik/ob_ik_token.h"
 
@@ -37,6 +38,9 @@ public:
   int process(TokenizeContext &ctx);
 
   int output_result(TokenizeContext &ctx);
+
+  // Drop chains from the previous batch and keep the hash buckets.
+  void reuse();
 
 private:
   int prepare(TokenizeContext &ctx);

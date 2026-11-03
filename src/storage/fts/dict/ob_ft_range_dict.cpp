@@ -382,16 +382,29 @@ int ObFTRangeDict::find_first_char_range(const ObString &single_word, ObIFTDict 
 {
   int ret = OB_SUCCESS;
   bool found = false;
-  for (int i = 0; OB_SUCC(ret) && !found && i < range_dicts_.size(); ++i) {
+  // Ranges are appended in dictionary order, so first characters are sorted.
+  // Pick the rightmost range whose start character is <= the lookup character.
+  const int64_t range_cnt = range_dicts_.size();
+  int64_t lo = 0;
+  int64_t hi = range_cnt;
+  while (lo < hi) {
+    const int64_t mid = lo + ((hi - lo) >> 1);
+    const int cmp = ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
+                                      range_dicts_[mid].start_.get_word(),
+                                      single_word);
+    if (cmp <= 0) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  if (lo > 0) {
+    const int64_t candidate = lo - 1;
     if (ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                          range_dicts_[i].start_.get_word(),
+                          range_dicts_[candidate].end_.get_word(),
                           single_word)
-            <= 0
-        && ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                             range_dicts_[i].end_.get_word(),
-                             single_word)
-               >= 0) {
-      dict = range_dicts_[i].dict_;
+        >= 0) {
+      dict = range_dicts_[candidate].dict_;
       found = true;
     }
   }

@@ -50,6 +50,9 @@ public:
 
   int step_next();
 
+  // Point this context at a new document without rebuilding token storage.
+  int retarget(ObCollationType coll_type, const char *fulltext, int64_t fulltext_len, bool is_smart);
+
   ObCollationType collation() const;
   int64_t get_end_cursor() const;
   const char *fulltext() const;
@@ -88,7 +91,7 @@ private:
   bool is_smart_;
 
   ObFTSortList token_list_;
-  ObList<ObIKToken, ObIAllocator> result_list_;
+  ObFastSegmentArray<ObIKToken> result_list_;
 
 private:
   DISALLOW_COPY_AND_ASSIGN(TokenizeContext);
@@ -102,6 +105,9 @@ public:
   virtual ~ObIIKProcessor() {}
 
   int process(TokenizeContext &ctx);
+
+  // Drop per-document scan state. Token storage capacity is kept.
+  virtual void reuse() {}
 
   virtual int do_process(TokenizeContext &ctx,
                          const char *ch,

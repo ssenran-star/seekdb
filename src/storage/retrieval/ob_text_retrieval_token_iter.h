@@ -17,6 +17,7 @@
 #ifndef OB_TEXT_RETRIEVAL_TOKEN_ITER_H_
 #define OB_TEXT_RETRIEVAL_TOKEN_ITER_H_
 
+#include "lib/allocator/page_arena.h"
 #include "lib/container/ob_se_array.h"
 #include "query/engine/expr/ob_expr.h"
 #include "ob_block_max_iter.h"
@@ -113,6 +114,7 @@ private:
   int64_t token_doc_cnt_;
   double max_token_relevance_;
   ObDocIdExt advance_doc_id_;
+  common::ObArenaAllocator est_alloc_;
   bool token_doc_cnt_calculated_;
   bool inv_idx_agg_cache_mode_;
   bool is_inited_;

@@ -21,6 +21,7 @@
 #include "storage/fts/dict/ob_ft_cache_container.h"
 #include "storage/fts/dict/ob_ft_dict.h"
 #include "storage/fts/dict/ob_ft_dict_def.h"
+#include "storage/fts/ik/ob_ik_arbitrator.h"
 #include "storage/fts/ik/ob_ik_processor.h"
 #include "data_plane/fts/ob_fts_parser.h"
 
@@ -46,13 +47,21 @@ public:
         cache_stop_(allocator),
         dict_main_(nullptr),
         dict_quan_(nullptr),
-        dict_stop_(nullptr)
+        dict_stop_(nullptr),
+        pooled_(false)
   {
   }
 
   virtual ~ObIKFTParser() { reset(); }
 
   int init(const ObFTParserParam &param);
+
+  // Reuse dictionaries and segmenters for another document.
+  int reuse(const ObFTParserParam &param);
+
+  void set_pooled(const bool pooled) { pooled_ = pooled; }
+  bool is_pooled() const { return pooled_; }
+  bool inited() const { return is_inited_; }
 
   int get_next_token(const char *&word,
                      int64_t &word_len,
@@ -106,6 +115,8 @@ private:
   ObIFTDict *dict_main_;
   ObIFTDict *dict_quan_;
   ObIFTDict *dict_stop_;
+  ObIKArbitrator arb_;
+  bool pooled_;
 
   DISABLE_COPY_ASSIGN(ObIKFTParser);
 };

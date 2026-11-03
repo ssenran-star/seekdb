@@ -40,9 +40,10 @@ public:
                  const char *ch,
                  const uint8_t char_len,
                  const ObFTCharUtil::CharType type) override;
+  void reuse() override { hits_.reset(); }
 
 private:
-  ObList<ObDATrieHit, ObIAllocator> hits_;
+  ObFastSegmentArray<ObDATrieHit> hits_;
   const ObIFTDict &dict_main_;
   int64_t cjk_start_;
   int64_t cjk_end_;

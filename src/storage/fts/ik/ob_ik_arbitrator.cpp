@@ -301,12 +301,26 @@ int ObIKArbitrator::remove_conflict(const ObIKToken &token, ObIKTokenChain *opti
 int ObIKArbitrator::prepare(TokenizeContext &ctx)
 {
   int ret = OB_SUCCESS;
-
-  int cal_bucket_num = MAX(ctx.fulltext_len() / 100, 10);
-  cal_bucket_num = MIN(cal_bucket_num, 100);
-  if (OB_FAIL(chains_.create(cal_bucket_num, ObMemAttr("IK ARBITRATE")))) {
+  UNUSED(ctx);
+  // Bucket count used to depend on document length and was recreated every batch.
+  // Keep one map per arbitrator; clear() retains the buckets.
+  static const int64_t BUCKET_NUM = 100;
+  if (!chains_.created()) {
+    if (OB_FAIL(chains_.create(BUCKET_NUM, ObMemAttr("IK ARBITRATE")))) {
+    }
+  } else if (OB_FAIL(chains_.clear())) {
+  } else {
+    alloc_.reuse();
   }
   return ret;
+}
+
+void ObIKArbitrator::reuse()
+{
+  if (chains_.created()) {
+    chains_.clear();
+  }
+  alloc_.reuse();
 }
 
 ObIKArbitrator::ObIKArbitrator() : alloc_(lib::ObMemAttr("IK Arbitrator")) {}
@@ -325,7 +339,9 @@ int ObIKArbitrator::add_chain(ObIKTokenChain *chain)
 
 ObIKArbitrator::~ObIKArbitrator()
 {
-  chains_.destroy();
+  if (chains_.created()) {
+    chains_.destroy();
+  }
   alloc_.reset();
 }
 } // namespace storage

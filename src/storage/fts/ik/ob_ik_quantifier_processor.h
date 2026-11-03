@@ -40,6 +40,11 @@ public:
                  const char *ch,
                  const uint8_t char_len,
                  const ObFTCharUtil::CharType type);
+  void reuse() override
+  {
+    count_hits_.reset();
+    reset();
+  }
 
 private:
   int process_CN_number(TokenizeContext &ctx,
@@ -59,7 +64,7 @@ private:
 
 private:
   const ObIFTDict &quan_dict_;
-  ObList<ObDATrieHit, ObIAllocator> count_hits_;
+  ObFastSegmentArray<ObDATrieHit> count_hits_;
   int64_t start_;
   int64_t end_;
   int64_t quan_char_cnt_;

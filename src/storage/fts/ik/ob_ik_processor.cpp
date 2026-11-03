@@ -152,6 +152,29 @@ bool TokenizeContext::iter_end() const { return cursor_ >= fulltext_len_; }
 
 bool TokenizeContext::is_smart() const { return is_smart_; }
 
+int TokenizeContext::retarget(ObCollationType coll_type,
+                              const char *fulltext,
+                              int64_t fulltext_len,
+                              bool is_smart)
+{
+  int ret = OB_SUCCESS;
+  coll_type_ = coll_type;
+  fulltext_ = fulltext;
+  fulltext_len_ = fulltext_len;
+  cursor_ = 0;
+  next_char_len_ = 0;
+  next_char_type_ = ObFTCharUtil::CharType::USELESS;
+  handle_size_ = 0;
+  is_smart_ = is_smart;
+  token_list_.reset();
+  result_list_.reset();
+  if (OB_ISNULL(fulltext_) || fulltext_len_ <= 0) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(prepare_next_char())) {
+  }
+  return ret;
+}
+
 int TokenizeContext::add_token(const char *fulltext,
                                int64_t offset,
                                int64_t length,
@@ -206,7 +229,7 @@ int TokenizeContext::get_next_token(const char *&word,
 int TokenizeContext::compound(ObIKToken &token)
 {
   int ret = OB_SUCCESS;
-  ObList<ObIKToken, ObIAllocator> &list = result_list_;
+  ObFastSegmentArray<ObIKToken> &list = result_list_;
   if (is_smart_) {
     if (!list.empty()) {
       if (ObIKTokenType::IK_ARABIC_TOKEN == token.type_) {

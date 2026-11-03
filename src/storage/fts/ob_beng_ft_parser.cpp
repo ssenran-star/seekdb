@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX STORAGE_FTS
 
 #include "storage/fts/ob_beng_ft_parser.h"
+#include "lib/allocator/page_arena.h"
 #include "data_plane/fts/ob_fts_struct.h"
 
 using namespace oceanbase::common;
@@ -49,7 +50,9 @@ int ObBEngFTParser::get_next_token(
     }
   } else if (OB_ISNULL(token.ptr_) || OB_UNLIKELY(0 >= token.len_ || 0 >= token_freq)) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(token.len_)))) {
+  } else if (OB_ISNULL(token_alloc_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_ISNULL(buf = static_cast<char *>(token_alloc_->alloc(token.len_)))) {
     ret = OB_ALLOCATE_MEMORY_FAILED;
   } else {
     MEMCPY(buf, token.ptr_, token.len_);
@@ -72,6 +75,7 @@ int ObBEngFTParser::init(ObFTParserParam *param)
   } else if (OB_UNLIKELY(UINT32_MAX < param->ft_length_)) {
     ret = OB_NOT_SUPPORTED;
   } else {
+    token_alloc_ = param->allocator_;
     doc_.set_string(param->fulltext_, param->ft_length_);
     analysis_ctx_.cs_ = param->cs_;
     analysis_ctx_.filter_stopword_ = false;
@@ -86,6 +90,27 @@ int ObBEngFTParser::init(ObFTParserParam *param)
   }
   if (OB_FAIL(ret) && OB_UNLIKELY(!is_inited_)) {
     reset();
+  }
+  return ret;
+}
+
+int ObBEngFTParser::reuse(ObFTParserParam *param)
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_ISNULL(param) || OB_UNLIKELY(!param->is_valid())) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (analysis_ctx_.cs_ != param->cs_) {
+    // Normalizers keep the charset pointer from init.
+    ret = OB_NOT_SUPPORTED;
+  } else if (OB_UNLIKELY(UINT32_MAX < param->ft_length_)) {
+    ret = OB_NOT_SUPPORTED;
+  } else {
+    token_alloc_ = param->allocator_;
+    doc_.set_string(param->fulltext_, param->ft_length_);
+    if (OB_FAIL(segment(doc_, token_stream_))) {
+    }
   }
   return ret;
 }
@@ -113,6 +138,48 @@ void ObBEngFTParser::reset()
   is_inited_ = false;
 }
 
+namespace
+{
+struct ObBEngParserSlot
+{
+  ObArenaAllocator alloc;
+  ObBEngFTParser *parser;
+  bool in_use;
+  ObBEngParserSlot() : alloc(lib::ObMemAttr("BEngParser")), parser(nullptr), in_use(false) {}
+  ~ObBEngParserSlot()
+  {
+    if (nullptr != parser) {
+      parser->~ObBEngFTParser();
+      parser = nullptr;
+    }
+  }
+};
+
+ObBEngParserSlot &beng_parser_slot()
+{
+  static thread_local ObBEngParserSlot slot;
+  return slot;
+}
+
+void release_beng_parser(ObBEngFTParser *parser)
+{
+  ObBEngParserSlot &slot = beng_parser_slot();
+  if (slot.parser == parser) {
+    slot.in_use = false;
+  }
+}
+
+void destroy_beng_parser_slot()
+{
+  ObBEngParserSlot &slot = beng_parser_slot();
+  if (nullptr != slot.parser) {
+    slot.parser->~ObBEngFTParser();
+    slot.parser = nullptr;
+  }
+  slot.in_use = false;
+}
+} // namespace
+
 ObBasicEnglishFTParserDesc::ObBasicEnglishFTParserDesc() {}
 
 int ObBasicEnglishFTParserDesc::segment(
@@ -121,17 +188,56 @@ int ObBasicEnglishFTParserDesc::segment(
 {
   int ret = OB_SUCCESS;
   ObBEngFTParser *parser = nullptr;
+  bool pooled = false;
+  bool need_init = true;
   if (OB_ISNULL(param) || OB_ISNULL(param->fulltext_) || OB_UNLIKELY(!param->is_valid())) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_ISNULL(parser = OB_NEWx(ObBEngFTParser, param->allocator_, *(param->allocator_)))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else if (OB_FAIL(parser->init(param))) {
+  } else {
+    ObBEngParserSlot &slot = beng_parser_slot();
+    if (!slot.in_use && nullptr != slot.parser && slot.parser->inited()
+        && slot.parser->text_charset() == param->cs_) {
+      slot.in_use = true;
+      parser = slot.parser;
+      pooled = true;
+      need_init = false;
+      if (OB_FAIL(parser->reuse(param))) {
+        destroy_beng_parser_slot();
+        parser = nullptr;
+        pooled = false;
+      }
+    } else if (!slot.in_use) {
+      if (nullptr != slot.parser) {
+        destroy_beng_parser_slot();
+      }
+      if (OB_ISNULL(parser = OB_NEWx(ObBEngFTParser, &slot.alloc, slot.alloc))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else if (OB_FAIL(parser->init(param))) {
+        parser->~ObBEngFTParser();
+        parser = nullptr;
+      } else {
+        parser->set_pooled(true);
+        slot.parser = parser;
+        slot.in_use = true;
+        pooled = true;
+        need_init = false;
+      }
+    } else if (OB_ISNULL(parser = OB_NEWx(ObBEngFTParser, param->allocator_, *(param->allocator_)))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    }
+  }
+
+  if (OB_FAIL(ret)) {
+  } else if (need_init && OB_FAIL(parser->init(param))) {
   } else {
     iter = parser;
   }
 
   if (OB_FAIL(ret)) {
-    OB_DELETEx(ObBEngFTParser, param->allocator_, parser);
+    if (pooled) {
+      release_beng_parser(parser);
+    } else if (OB_NOT_NULL(param) && OB_NOT_NULL(param->allocator_)) {
+      OB_DELETEx(ObBEngFTParser, param->allocator_, parser);
+    }
   }
 
   return ret;
@@ -142,10 +248,16 @@ void ObBasicEnglishFTParserDesc::free_token_iter(
     ObITokenIterator *&iter) const
 {
   if (OB_NOT_NULL(iter)) {
-    abort_unless(nullptr != param);
-    abort_unless(nullptr != param->allocator_);
-    iter->~ObITokenIterator();
-    param->allocator_->free(iter);
+    ObBEngFTParser *parser = static_cast<ObBEngFTParser *>(iter);
+    if (parser->is_pooled()) {
+      release_beng_parser(parser);
+    } else {
+      abort_unless(nullptr != param);
+      abort_unless(nullptr != param->allocator_);
+      iter->~ObITokenIterator();
+      param->allocator_->free(iter);
+    }
+    iter = nullptr;
   }
 }
 

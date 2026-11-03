@@ -18,7 +18,7 @@
 #define _OCEANBASE_STORAGE_FTS_IK_OB_IK_TOKEN_H_
 
 #include "lib/allocator/ob_allocator.h"
-#include "lib/list/ob_list.h"
+#include "storage/fts/ik/ob_ft_segment_array.h"
 namespace oceanbase
 {
 namespace storage
@@ -87,15 +87,15 @@ public:
 
   int64_t max();
 
-  ObList<ObIKToken, ObIAllocator> &tokens() { return tokens_; }
-  const ObList<ObIKToken, ObIAllocator> &tokens() const { return tokens_; }
+  ObFastSegmentArray<ObIKToken> &tokens() { return tokens_; }
+  const ObFastSegmentArray<ObIKToken> &tokens() const { return tokens_; }
 
 public:
-  typedef ObList<ObIKToken, ObIAllocator>::iterator CellIter;
-  typedef ObList<ObIKToken, ObIAllocator>::const_iterator ConstCellIter;
+  typedef ObFastSegmentArray<ObIKToken>::iterator CellIter;
+  typedef ObFastSegmentArray<ObIKToken>::const_iterator ConstCellIter;
 
 private:
-  ObList<ObIKToken, ObIAllocator> tokens_;
+  ObFastSegmentArray<ObIKToken> tokens_;
 };
 
 class ObIKTokenChain
