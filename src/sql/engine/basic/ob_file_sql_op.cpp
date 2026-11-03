@@ -397,6 +397,9 @@ int check_secure_realpath(ObSQLSessionInfo *session, const char *path, ObString 
   } else if (OB_FAIL(session->get_secure_file_priv(secure))) {
     LOG_WARN("get secure_file_priv failed", K(ret));
   } else if (OB_FAIL(ObResolverUtils::check_secure_path(secure, ObString(rp)))) {
+    if (OB_ERR_NO_PRIVILEGE == ret) {
+      ret = OB_ERR_NO_PRIV_DIRECT_PATH_ACCESS;
+    }
     LOG_WARN("path is outside secure_file_priv", K(ret), K(secure), K(rp));
   } else if (OB_FAIL(write_dup(alloc, rp, static_cast<int32_t>(strlen(rp)), canon))) {
   }

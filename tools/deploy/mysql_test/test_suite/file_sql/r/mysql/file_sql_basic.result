@@ -1,6 +1,6 @@
-# enable_file_sql defaults to OFF
+# enable_file_sql is on by default and can be switched off
 default_enabled
-0
+1
 # syntax and format validation
 # CSV scan, type conversion, duplicate headers and multiline quotes
 id	name	score	active	day	created	note	id__2

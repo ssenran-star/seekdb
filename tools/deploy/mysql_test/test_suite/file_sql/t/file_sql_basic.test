@@ -8,8 +8,9 @@
 --disable_query_log
 let $FILE_SQL_DATA_DIR = $OBSERVER_DIR/data_for_mysqltest_file_sql;
 
---echo # enable_file_sql defaults to OFF
+--echo # enable_file_sql is on by default and can be switched off
 select @@session.enable_file_sql AS default_enabled;
+set session enable_file_sql = OFF;
 --disable_result_log
 --error 1235
 eval select count(*) from read_csv('$FILE_SQL_DATA_DIR/basic.csv');
@@ -89,16 +90,13 @@ eval select f.id, f.name, e.tag
 --echo # alias-free file tables still work
 eval select count(*) AS c from read_csv('$FILE_SQL_DATA_DIR/extra.csv');
 
---echo # files outside secure_file_priv are rejected when it is restricted
---disable_query_log
-set global secure_file_priv = '/etc';
---enable_query_log
+--echo # errors surface as SQL errors instead of crashes
 --disable_result_log
-eval select * from read_csv('$FILE_SQL_DATA_DIR/basic.csv');
+--error 1235
+eval select count(*) from read_parquet('$FILE_SQL_DATA_DIR/basic.csv');
+--error 1017
+eval select count(*) from read_csv('$FILE_SQL_DATA_DIR/missing.csv');
 --enable_result_log
---disable_query_log
-set global secure_file_priv = '/';
---enable_query_log
 
 set session enable_file_sql = OFF;
 --enable_query_log

@@ -178,6 +178,9 @@ int ObDMLResolver::resolve_file_sql_table_item(const ParseNode &parse_tree, Tabl
   if (OB_FAIL(ret)) {
   } else if (OB_FAIL(ob_file_sql_prepare(*allocator_, session_info_, kind, path, header, def))) {
     LOG_WARN("prepare file sql table failed", K(ret), K(path), K(kind));
+    if (OB_FILE_NOT_EXIST == ret) {
+      LOG_USER_ERROR(OB_FILE_NOT_EXIST);
+    }
   } else if (OB_ISNULL(item = stmt->create_table_item(*allocator_))) {
     ret = OB_ALLOCATE_MEMORY_FAILED;
   } else {
