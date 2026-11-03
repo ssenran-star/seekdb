@@ -91,6 +91,9 @@ private:
 
   void reset();
 
+  // True when the pinned dictionaries still match the cache the hub holds.
+  bool dict_pins_still_valid();
+
   bool should_read_newest_table() const;
 
   int build_dict_from_cache(const ObFTDictDesc &desc,

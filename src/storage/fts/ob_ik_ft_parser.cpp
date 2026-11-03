@@ -18,9 +18,8 @@
 
 #include "src/storage/fts/ob_ik_ft_parser.h"
 
-#include <new>
-
 #include "lib/allocator/page_arena.h"
+#include "lib/thread_local/ob_tsi_factory.h"
 #include "lib/charset/ob_charset.h"
 #include "lib/ob_errno.h"
 #include "lib/oblog/ob_log_module.h"
@@ -122,6 +121,10 @@ int ObIKFTParser::reuse(const ObFTParserParam &param)
     ret = OB_INVALID_ARGUMENT;
   } else if (CS_TYPE_INVALID == (coll_type_ = ObCharset::collation_type(param.cs_->name))) {
     ret = OB_INVALID_ARGUMENT;
+  } else if (!dict_pins_still_valid()) {
+    // A dictionary may have been rebuilt since the last document. Reusing the
+    // old pin would read a dropped version, so rebuild this parser instead.
+    ret = OB_VERSION_NOT_MATCH;
   } else {
     for (ObList<ObIIKProcessor *, ObIAllocator>::iterator iter = segmenters_.begin();
          OB_SUCC(ret) && iter != segmenters_.end();
@@ -140,6 +143,23 @@ int ObIKFTParser::reuse(const ObFTParserParam &param)
     }
   }
   return ret;
+}
+
+bool ObIKFTParser::dict_pins_still_valid()
+{
+  ObFTDictDesc desc("main_dict",
+                    ObFTDictType::DICT_IK_MAIN,
+                    ObCharsetType::CHARSET_UTF8MB4,
+                    ObCollationType::CS_TYPE_UTF8MB4_BIN);
+  ObFTCacheRangeContainer probe(allocator_);
+  bool valid = OB_NOT_NULL(hub_) && OB_NOT_NULL(dict_main_);
+  if (!valid) {
+  } else if (OB_FAIL(hub_->load_cache(desc, probe))) {
+    // Missing or evicted ranges: the pinned dictionary cannot be trusted.
+    valid = false;
+  }
+  probe.reset();
+  return valid;
 }
 
 int ObIKFTParser::produce()
@@ -225,45 +245,46 @@ namespace
 {
 struct ObIKParserSlot
 {
-  // trivially constructible, so use-before-construction is well defined.
+  ObIKParserSlot() : alloc(lib::ObMemAttr("IKParser")), parser(nullptr), in_use(false) {}
+  ~ObIKParserSlot()
+  {
+    if (nullptr != parser) {
+      parser->~ObIKFTParser();
+      parser = nullptr;
+    }
+  }
   ObArenaAllocator alloc;
   ObIKFTParser *parser;
   bool in_use;
 };
 
-// Heap allocated on first use and intentionally not destroyed at thread exit:
-// the parser pins dictionaries that may already be gone when another thread's
-// static destructor runs. The slot is released with the thread.
-ObIKParserSlot &ik_parser_slot()
+// ObDITls deletes the slot at thread exit, not in static destruction order,
+// and refuses to construct a new one once the thread is leaving.
+typedef common::ObDITls<ObIKParserSlot, 0x494b5031> ObIKParserSlotTls;
+
+ObIKParserSlot *ik_parser_slot()
 {
-  static thread_local ObIKParserSlot *slot = nullptr;
-  if (OB_ISNULL(slot)) {
-    slot = new (std::nothrow) ObIKParserSlot();
-    if (OB_NOT_NULL(slot)) {
-      new (&slot->alloc) ObArenaAllocator(lib::ObMemAttr("IKParser"));
-      slot->parser = nullptr;
-      slot->in_use = false;
-    }
-  }
-  return *slot;
+  return ObIKParserSlotTls::get_instance();
 }
 
 void release_ik_parser(ObIKFTParser *parser)
 {
-  ObIKParserSlot &slot = ik_parser_slot();
-  if (slot.parser == parser) {
-    slot.in_use = false;
+  ObIKParserSlot *slot = ik_parser_slot();
+  if (OB_NOT_NULL(slot) && slot->parser == parser) {
+    slot->in_use = false;
   }
 }
 
 void destroy_ik_parser_slot()
 {
-  ObIKParserSlot &slot = ik_parser_slot();
-  if (nullptr != slot.parser) {
-    slot.parser->~ObIKFTParser();
-    slot.parser = nullptr;
+  ObIKParserSlot *slot = ik_parser_slot();
+  if (OB_NOT_NULL(slot) && nullptr != slot->parser) {
+    slot->parser->~ObIKFTParser();
+    slot->parser = nullptr;
   }
-  slot.in_use = false;
+  if (OB_NOT_NULL(slot)) {
+    slot->in_use = false;
+  }
 }
 
 enum class ObIKParserAction
@@ -283,26 +304,29 @@ int acquire_ik_parser(const ObFTParserParam &param,
   parser = nullptr;
   pooled = false;
   action = ObIKParserAction::INIT;
-  ObIKParserSlot &slot = ik_parser_slot();
-  if (!slot.in_use && nullptr != slot.parser && slot.parser->inited()) {
-    slot.in_use = true;
-    parser = slot.parser;
+  ObIKParserSlot *slot = ik_parser_slot();
+  if (OB_ISNULL(slot)) {
+    // Leaving the thread: no new thread-local parser is allowed.
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else if (!slot->in_use && nullptr != slot->parser && slot->parser->inited()) {
+    slot->in_use = true;
+    parser = slot->parser;
     pooled = true;
     action = ObIKParserAction::REUSE;
-  } else if (!slot.in_use) {
-    if (nullptr != slot.parser) {
-      slot.parser->~ObIKFTParser();
-    slot.parser = nullptr;
+  } else if (!slot->in_use) {
+    if (nullptr != slot->parser) {
+      slot->parser->~ObIKFTParser();
+      slot->parser = nullptr;
     }
-    if (OB_ISNULL(parser = OB_NEWx(ObIKFTParser, &slot.alloc, slot.alloc, hub))) {
+    if (OB_ISNULL(parser = OB_NEWx(ObIKFTParser, &slot->alloc, slot->alloc, hub))) {
       ret = OB_ALLOCATE_MEMORY_FAILED;
     } else if (OB_FAIL(parser->init(param))) {
       parser->~ObIKFTParser();
       parser = nullptr;
     } else {
       parser->set_pooled(true);
-      slot.parser = parser;
-      slot.in_use = true;
+      slot->parser = parser;
+      slot->in_use = true;
       pooled = true;
       action = ObIKParserAction::READY;
     }

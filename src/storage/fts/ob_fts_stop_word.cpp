@@ -19,6 +19,7 @@
 
 #include "lib/charset/ob_charset.h"
 #include "lib/charset/ob_ctype.h"
+#include "lib/thread_local/ob_tsi_factory.h"
 #include "share/rc/ob_server_runtime.h"
 #include "storage/fts/ob_fts_stop_word.h"
 #include "storage/fts/ob_fts_parser_helper.h"
@@ -96,10 +97,13 @@ bool is_ascii_compatible_charset(const common::ObCharsetType charset)
   }
 }
 
-common::ObArenaAllocator &stopword_convert_allocator()
+// ObDITls destroys at thread exit instead of at static destruction order, and
+// refuses to construct once the thread is leaving.
+typedef common::ObDITls<common::ObArenaAllocator, 0x53543331> ObStopWordConvertArena;
+
+common::ObArenaAllocator *stopword_convert_allocator()
 {
-  static thread_local common::ObArenaAllocator alloc(lib::ObMemAttr("FTStopCv"));
-  return alloc;
+  return ObStopWordConvertArena::get_instance();
 }
 
 void resolve_stopword_lookup(const int exist_ret, bool &is_stopword, int &ret)
@@ -148,11 +152,13 @@ int ObStopWordChecker::check_stopword(const ObFTWord &word, bool &is_stopword)
       resolve_stopword_lookup(stopword_set_.exist_refactored(converted), is_stopword, ret);
     } else {
       // One arena per thread. The previous implementation allocated a new one per token.
-      common::ObArenaAllocator &allocator = stopword_convert_allocator();
-      allocator.reuse();
+      common::ObArenaAllocator *allocator = stopword_convert_allocator();
       common::ObString cmp_str;
-      if (OB_FAIL(common::ObCharset::charset_convert(
-                                         allocator,
+      if (OB_ISNULL(allocator)) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else if (FALSE_IT(allocator->reuse())) {
+      } else if (OB_FAIL(common::ObCharset::charset_convert(
+                                         *allocator,
                                          raw,
                                          word.get_collation_type(),
                                          stopword_type_.get_collation_type(),

@@ -14,7 +14,13 @@ Parser and index build (build_* and tokenize_*):
 
 - One IK parser and one basic-English parser are kept per thread. Later
   documents reuse the dictionary pins, segmenters, and analyzer. A nested
-  call on the same thread still allocates a private parser.
+  call on the same thread still allocates a private parser. A pooled IK
+  parser is only reused while the dictionary hub can still load the ranges it
+  is pinned to; otherwise it is dropped and the next document does a normal
+  fresh init.
+- Parser slots and the stopword conversion arena are thread-local through
+  `ObDITls`, which deletes them at thread exit and will not build a new one
+  while the thread is leaving.
 - IK token lists and trie-hit lists use `ObFastSegmentArray`, a ring buffer
   whose `reset()` keeps its storage. Hits are copied with the copy
   constructor, since `ObDATrieHit::operator=` does not copy `dict_`.

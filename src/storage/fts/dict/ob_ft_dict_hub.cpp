@@ -105,9 +105,13 @@ int ObFTDictHub::load_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &c
     if (OB_FAIL(ret)) {
     } else if (OB_FAIL(ObFTRangeDict::try_load_cache(desc, info.range_count_, container))) {
       if (OB_ENTRY_NOT_EXIST == ret) {
-        // dict not exist, make new one, by caller
       } else {
       }
+    }
+    if (OB_ENTRY_NOT_EXIST == ret) {
+      // The recorded ranges are no longer in the cache. Leave the error set so
+      // callers rebuild the cache instead of using an empty container as a dict.
+      LOG_INFO("fts dict ranges are not cached, rebuild", K(desc.type_), K(info.range_count_));
     }
   }
 

@@ -18,9 +18,8 @@
 
 #include "storage/fts/ob_beng_ft_parser.h"
 #include "lib/allocator/page_arena.h"
+#include "lib/thread_local/ob_tsi_factory.h"
 #include "data_plane/fts/ob_fts_struct.h"
-
-#include <new>
 
 using namespace oceanbase::common;
 
@@ -144,46 +143,47 @@ namespace
 {
 struct ObBEngParserSlot
 {
-  // trivially constructible, so use-before-construction is well defined.
+  ObBEngParserSlot() : alloc(lib::ObMemAttr("BEngParser")), parser(nullptr), in_use(false) {}
+  ~ObBEngParserSlot()
+  {
+    if (nullptr != parser) {
+      parser->destroy();
+      parser = nullptr;
+    }
+  }
   ObArenaAllocator alloc;
   ObBEngFTParser *parser;
   bool in_use;
 };
 
-// Heap allocated on first use and intentionally not destroyed at thread exit:
-// the analyzer pins runtime memory that may already be gone when another
-// thread's static destructor runs. The slot is released with the thread.
-ObBEngParserSlot &beng_parser_slot()
+// ObDITls deletes the slot at thread exit, not in static destruction order,
+// and refuses to construct a new one once the thread is leaving.
+typedef common::ObDITls<ObBEngParserSlot, 0x42454e31> ObBEngParserSlotTls;
+
+ObBEngParserSlot *beng_parser_slot()
 {
-  static thread_local ObBEngParserSlot *slot = nullptr;
-  if (OB_ISNULL(slot)) {
-    slot = new (std::nothrow) ObBEngParserSlot();
-    if (OB_NOT_NULL(slot)) {
-      new (&slot->alloc) ObArenaAllocator(lib::ObMemAttr("BEngParser"));
-      slot->parser = nullptr;
-      slot->in_use = false;
-    }
-  }
-  return *slot;
+  return ObBEngParserSlotTls::get_instance();
 }
 
 void release_beng_parser(ObBEngFTParser *parser)
 {
-  ObBEngParserSlot &slot = beng_parser_slot();
-  if (slot.parser == parser) {
-    slot.in_use = false;
+  ObBEngParserSlot *slot = beng_parser_slot();
+  if (OB_NOT_NULL(slot) && slot->parser == parser) {
+    slot->in_use = false;
   }
 }
 
 void destroy_beng_parser_slot()
 {
-  ObBEngParserSlot &slot = beng_parser_slot();
-  if (nullptr != slot.parser) {
-    slot.parser->destroy();
-    slot.alloc.reset();
-    slot.parser = nullptr;
+  ObBEngParserSlot *slot = beng_parser_slot();
+  if (OB_NOT_NULL(slot) && nullptr != slot->parser) {
+    slot->parser->destroy();
+    slot->alloc.reset();
+    slot->parser = nullptr;
   }
-  slot.in_use = false;
+  if (OB_NOT_NULL(slot)) {
+    slot->in_use = false;
+  }
 }
 } // namespace
 
@@ -200,11 +200,14 @@ int ObBasicEnglishFTParserDesc::segment(
   if (OB_ISNULL(param) || OB_ISNULL(param->fulltext_) || OB_UNLIKELY(!param->is_valid())) {
     ret = OB_INVALID_ARGUMENT;
   } else {
-    ObBEngParserSlot &slot = beng_parser_slot();
-    if (!slot.in_use && nullptr != slot.parser && slot.parser->inited()
-        && slot.parser->text_charset() == param->cs_) {
-      slot.in_use = true;
-      parser = slot.parser;
+    ObBEngParserSlot *slot = beng_parser_slot();
+    if (OB_ISNULL(slot)) {
+      // Leaving the thread: no new thread-local parser is allowed.
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else if (!slot->in_use && nullptr != slot->parser && slot->parser->inited()
+        && slot->parser->text_charset() == param->cs_) {
+      slot->in_use = true;
+      parser = slot->parser;
       pooled = true;
       need_init = false;
       if (OB_FAIL(parser->reuse(param))) {
@@ -212,19 +215,19 @@ int ObBasicEnglishFTParserDesc::segment(
         parser = nullptr;
         pooled = false;
       }
-    } else if (!slot.in_use) {
-      if (nullptr != slot.parser) {
+    } else if (!slot->in_use) {
+      if (nullptr != slot->parser) {
         destroy_beng_parser_slot();
       }
-      if (OB_ISNULL(parser = OB_NEWx(ObBEngFTParser, &slot.alloc, slot.alloc))) {
+      if (OB_ISNULL(parser = OB_NEWx(ObBEngFTParser, &slot->alloc, slot->alloc))) {
         ret = OB_ALLOCATE_MEMORY_FAILED;
       } else if (OB_FAIL(parser->init(param))) {
         parser->~ObBEngFTParser();
         parser = nullptr;
       } else {
         parser->set_pooled(true);
-        slot.parser = parser;
-        slot.in_use = true;
+        slot->parser = parser;
+        slot->in_use = true;
         pooled = true;
         need_init = false;
       }
