@@ -53,27 +53,6 @@ private:
 
 typedef common::hash::ObHashMap<ObFTWord, int64_t> ObFTWordMap;
 
-// Reuses one word-count map per thread. ObHashMap's destructor does not
-// release buckets, so a stack map per document both allocated and leaked.
-class ObFTWordMapPoolGuard
-{
-public:
-  ObFTWordMapPoolGuard() : map_(nullptr), pooled_(false), local_(), inited_(false) {}
-  ~ObFTWordMapPoolGuard();
-  int init(const int64_t bucket_cnt);
-  ObFTWordMap &map() { return *map_; }
-  const ObFTWordMap &map() const { return *map_; }
-private:
-  static int acquire(const int64_t bucket_cnt, ObFTWordMap *&map, bool &pooled);
-  static void release(ObFTWordMap *map);
-  ObFTWordMap *map_;
-  bool pooled_;
-  ObFTWordMap local_;
-  bool inited_;
-  ObFTWordMapPoolGuard(const ObFTWordMapPoolGuard &) = delete;
-  ObFTWordMapPoolGuard &operator=(const ObFTWordMapPoolGuard &) = delete;
-};
-
 class ObAddWordFlag final
 {
 private:

@@ -18,6 +18,8 @@
 
 #include "src/storage/fts/ob_ik_ft_parser.h"
 
+#include <new>
+
 #include "lib/allocator/page_arena.h"
 #include "lib/charset/ob_charset.h"
 #include "lib/ob_errno.h"
@@ -223,23 +225,27 @@ namespace
 {
 struct ObIKParserSlot
 {
+  // trivially constructible, so use-before-construction is well defined.
   ObArenaAllocator alloc;
   ObIKFTParser *parser;
   bool in_use;
-  ObIKParserSlot() : alloc(lib::ObMemAttr("IKParser")), parser(nullptr), in_use(false) {}
-  ~ObIKParserSlot()
-  {
-    if (nullptr != parser) {
-      parser->~ObIKFTParser();
-      parser = nullptr;
-    }
-  }
 };
 
+// Heap allocated on first use and intentionally not destroyed at thread exit:
+// the parser pins dictionaries that may already be gone when another thread's
+// static destructor runs. The slot is released with the thread.
 ObIKParserSlot &ik_parser_slot()
 {
-  static thread_local ObIKParserSlot slot;
-  return slot;
+  static thread_local ObIKParserSlot *slot = nullptr;
+  if (OB_ISNULL(slot)) {
+    slot = new (std::nothrow) ObIKParserSlot();
+    if (OB_NOT_NULL(slot)) {
+      new (&slot->alloc) ObArenaAllocator(lib::ObMemAttr("IKParser"));
+      slot->parser = nullptr;
+      slot->in_use = false;
+    }
+  }
+  return *slot;
 }
 
 void release_ik_parser(ObIKFTParser *parser)
@@ -286,7 +292,7 @@ int acquire_ik_parser(const ObFTParserParam &param,
   } else if (!slot.in_use) {
     if (nullptr != slot.parser) {
       slot.parser->~ObIKFTParser();
-      slot.parser = nullptr;
+    slot.parser = nullptr;
     }
     if (OB_ISNULL(parser = OB_NEWx(ObIKFTParser, &slot.alloc, slot.alloc, hub))) {
       ret = OB_ALLOCATE_MEMORY_FAILED;
@@ -347,7 +353,9 @@ void ObIKFTParserDesc::free_token_iter(ObFTParserParam *param,
     ObIKFTParser *parser = static_cast<ObIKFTParser *>(iter);
     if (parser->is_pooled()) {
       release_ik_parser(parser);
-    } else if (OB_NOT_NULL(param) && OB_NOT_NULL(param->allocator_)) {
+    } else {
+      abort_unless(nullptr != param);
+      abort_unless(nullptr != param->allocator_);
       iter->~ObITokenIterator();
       param->allocator_->free(iter);
     }

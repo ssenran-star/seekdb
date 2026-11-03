@@ -3,7 +3,6 @@
 #
 # 用于优化前后 seekdb 对比。建议固定 ROWS/BATCH/ROUNDS/QUERY_ROUNDS/SAMPLES，
 # 分别打 LABEL，并在相同机器负载下重复运行。
-# 打分口径、正确性检查和本分支的热路径改动说明见 tools/benchmark/FTS_B4_TUNING.md。
 #
 # 用法:
 #   ./tools/benchmark/fts_large_bench.sh

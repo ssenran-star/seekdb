@@ -43,11 +43,18 @@ public:
       is_inited_(false),
       pooled_(false)
   {}
-  ~ObBEngFTParser() { reset(); }
+  ~ObBEngFTParser() { destroy(); }
 
   int init(ObFTParserParam *param);
   int reuse(ObFTParserParam *param);
   void reset();
+  // reset() plus release the analyzer. Only the owning thread-local slot must
+  // call this; it must not run from a later thread's static destructor.
+  void destroy()
+  {
+    reset();
+    english_analyzer_.reset();
+  }
   void set_pooled(const bool pooled) { pooled_ = pooled; }
   bool is_pooled() const { return pooled_; }
   bool inited() const { return is_inited_; }

@@ -16,8 +16,8 @@ Parser and index build (build_* and tokenize_*):
   documents reuse the dictionary pins, segmenters, and analyzer. A nested
   call on the same thread still allocates a private parser.
 - IK token lists and trie-hit lists use `ObFastSegmentArray`, a ring buffer
-  whose `reset()` keeps its storage. `ObDATrieHit` values are copied with
-  `memcpy` because `operator=` does not copy `dict_`.
+  whose `reset()` keeps its storage. Hits are copied with the copy
+  constructor, since `ObDATrieHit::operator=` does not copy `dict_`.
 - The IK arbitrator keeps its hash buckets and arena across batches instead
   of creating them for every 1000-character window.
 - Dictionary range lookup is a binary search. Ranges are still produced in
@@ -29,17 +29,14 @@ Parser and index build (build_* and tokenize_*):
 - Stopword checks for ASCII-compatible charsets fold `A-Z` on the stack and
   probe the existing singleton set. Other charsets reuse one convert arena
   per thread instead of allocating one per token.
-- The per-document word-count hash map is reused per thread. `ObHashMap`'s
-  destructor does not free buckets, so the old stack map allocated and leaked
-  on every document and every `TOKENIZE` call.
+- Thread-local parsers are heap allocated on first use and are not destroyed
+  by a later thread's static destructor, so dictionary and analyzer teardown
+  never races with runtime shutdown.
 
 Query aggregation (`query_*`):
 
-- When the relevance expression is BM25 and the doc-length / term-frequency
-  columns are already evaluated by the scan, scores are written directly with
-  `ObExprBM25::doc_token_weight`. Any other shape, a non-positive average
-  length, or columns that are not yet evaluated falls back to `eval` /
-  `eval_batch`.
+- BM25 is still evaluated through the expression's own `eval` / `eval_batch`,
+  which is the path the plan's vectorized format and skip vector expect.
 - The per-token row-count estimate reuses its arena.
 
 Token text, stopword decisions, and BM25 weights are unchanged, so
@@ -103,10 +100,10 @@ timing in this change. The expected direction, once the bench is run on a
 real server:
 
 - `build_ik_*` and `tokenize_ik_avg_ms` move the most (parser, dictionary,
-  word map, and casedown copies are per document / per `TOKENIZE`).
-- `build_beng_en_sec` and `tokenize_beng_avg_ms` move from the parser reuse,
-  the word-map reuse, and the stopword check.
-- `query_*_avg_ms` moves when BM25 is evaluated on many postings. `query_limit`
+  and casedown copies are per document / per `TOKENIZE`).
+- `build_beng_en_sec` and `tokenize_beng_avg_ms` move from the parser reuse
+  and the stopword check.
+- `query_*_avg_ms` moves only from the estimate arena reuse; `query_limit`
   stays close to the other query times if the `LIMIT` is applied above the
   text-retrieval scan rather than inside it; this change does not rewrite
   that plan.

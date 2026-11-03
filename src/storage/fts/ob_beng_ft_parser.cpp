@@ -20,6 +20,8 @@
 #include "lib/allocator/page_arena.h"
 #include "data_plane/fts/ob_fts_struct.h"
 
+#include <new>
+
 using namespace oceanbase::common;
 
 namespace oceanbase
@@ -142,23 +144,27 @@ namespace
 {
 struct ObBEngParserSlot
 {
+  // trivially constructible, so use-before-construction is well defined.
   ObArenaAllocator alloc;
   ObBEngFTParser *parser;
   bool in_use;
-  ObBEngParserSlot() : alloc(lib::ObMemAttr("BEngParser")), parser(nullptr), in_use(false) {}
-  ~ObBEngParserSlot()
-  {
-    if (nullptr != parser) {
-      parser->~ObBEngFTParser();
-      parser = nullptr;
-    }
-  }
 };
 
+// Heap allocated on first use and intentionally not destroyed at thread exit:
+// the analyzer pins runtime memory that may already be gone when another
+// thread's static destructor runs. The slot is released with the thread.
 ObBEngParserSlot &beng_parser_slot()
 {
-  static thread_local ObBEngParserSlot slot;
-  return slot;
+  static thread_local ObBEngParserSlot *slot = nullptr;
+  if (OB_ISNULL(slot)) {
+    slot = new (std::nothrow) ObBEngParserSlot();
+    if (OB_NOT_NULL(slot)) {
+      new (&slot->alloc) ObArenaAllocator(lib::ObMemAttr("BEngParser"));
+      slot->parser = nullptr;
+      slot->in_use = false;
+    }
+  }
+  return *slot;
 }
 
 void release_beng_parser(ObBEngFTParser *parser)
@@ -173,7 +179,8 @@ void destroy_beng_parser_slot()
 {
   ObBEngParserSlot &slot = beng_parser_slot();
   if (nullptr != slot.parser) {
-    slot.parser->~ObBEngFTParser();
+    slot.parser->destroy();
+    slot.alloc.reset();
     slot.parser = nullptr;
   }
   slot.in_use = false;

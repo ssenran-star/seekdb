@@ -36,7 +36,7 @@ int ObIKArbitrator::process(TokenizeContext &ctx)
 {
   int ret = OB_SUCCESS;
 
-  ObList<ObIKToken, ObIAllocator> &tokens = ctx.token_list().tokens();
+  ObFastSegmentArray<ObIKToken> &tokens = ctx.token_list().tokens();
   ObIKTokenChain *chain_need_arbitrate = nullptr;
   bool use_smart = ctx.is_smart();
   if (OB_FAIL(prepare(ctx))) {
@@ -157,8 +157,9 @@ int ObIKArbitrator::output_result(TokenizeContext &ctx)
       }
       current += char_len;
     } else {
-      for (ObList<ObIKToken, ObIAllocator>::const_iterator iter = chain->list().tokens().begin();
-           OB_SUCC(ret) && iter != chain->list().tokens().end();
+      const ObFastSegmentArray<ObIKToken> &sorted = chain->list().tokens();
+      for (ObFTSortList::ConstCellIter iter = sorted.begin();
+           OB_SUCC(ret) && iter != sorted.end();
            iter++) {
         const ObIKToken &token = *iter;
         if (!keep_single()) {

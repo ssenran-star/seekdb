@@ -100,6 +100,8 @@ public:
     }
     bool operator==(const const_iterator &other) const { return idx_ == other.idx_; }
     bool operator!=(const const_iterator &other) const { return idx_ != other.idx_; }
+    bool operator==(const iterator &other) const { return idx_ == other.index(); }
+    bool operator!=(const iterator &other) const { return idx_ != other.index(); }
   private:
     const ObFastSegmentArray *arr_;
     int64_t idx_;
@@ -232,12 +234,12 @@ public:
   const_iterator end() const { return const_iterator(this, -1); }
 
 private:
-  // Bitwise copy. ObDATrieHit::operator= does not copy dict_, but the copy
-  // constructor does. Token and hit objects do not own memory.
+  // The copy constructor keeps ObDATrieHit::dict_, which its operator= drops.
+  // A memcpy would overwrite a live object's bytes behind its back.
   static void store(T &dst, const T &src)
   {
     if (&dst != &src) {
-      MEMCPY(&dst, &src, sizeof(T));
+      new (&dst) T(src);
     }
   }
 

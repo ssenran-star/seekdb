@@ -72,7 +72,7 @@ public:
 
   ObFTSortList &token_list() { return token_list_; }
 
-  ObList<ObIKToken, ObIAllocator> &result_list() { return result_list_; }
+  ObFastSegmentArray<ObIKToken> &result_list() { return result_list_; }
 
   int32_t handle_size() const { return handle_size_; }
 

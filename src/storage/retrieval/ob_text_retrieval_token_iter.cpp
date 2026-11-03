@@ -190,107 +190,11 @@ int ObTextRetrievalTokenIter::fill_token_weight()
   return ret;
 }
 
-namespace
-{
-int try_eval_bm25_row(sql::ObExpr &expr, sql::ObEvalCtx &ctx, bool &handled)
-{
-  int ret = OB_SUCCESS;
-  handled = false;
-  if (expr.type_ != T_FUN_SYS_BM25 || expr.arg_cnt_ != 6 || OB_ISNULL(expr.args_)) {
-  } else {
-    sql::ObExpr *doc_len_expr = expr.args_[sql::ObExprBM25::DOC_LENGTH_PARAM_IDX];
-    sql::ObExpr *tf_expr = expr.args_[sql::ObExprBM25::RELATED_TOKEN_CNT_PARAM_IDX];
-    sql::ObExpr *weight_expr = expr.args_[sql::ObExprBM25::TOKEN_WEIGHT_PARAM_IDX];
-    sql::ObExpr *avg_expr = expr.args_[sql::ObExprBM25::AVG_DOC_CNT_PARAM_IDX];
-    if (OB_ISNULL(doc_len_expr) || OB_ISNULL(tf_expr) || OB_ISNULL(weight_expr) || OB_ISNULL(avg_expr)) {
-    } else if (!doc_len_expr->get_eval_info(ctx).evaluated_ || !tf_expr->get_eval_info(ctx).evaluated_) {
-    } else {
-      const common::ObDatum &weight_datum = weight_expr->locate_expr_datum(ctx);
-      const common::ObDatum &avg_datum = avg_expr->locate_expr_datum(ctx);
-      const common::ObDatum &doc_len_datum = doc_len_expr->locate_expr_datum(ctx);
-      const common::ObDatum &tf_datum = tf_expr->locate_expr_datum(ctx);
-      if (weight_datum.is_null() || avg_datum.is_null() || doc_len_datum.is_null() || tf_datum.is_null()) {
-        ret = OB_ERR_UNEXPECTED;
-      } else if (!(avg_datum.get_double() > 0.0)) {
-      } else {
-        const double norm_len = static_cast<double>(doc_len_datum.get_uint()) / avg_datum.get_double();
-        const double relevance = weight_datum.get_double()
-            * sql::ObExprBM25::doc_token_weight(static_cast<int64_t>(tf_datum.get_uint()), norm_len);
-        expr.locate_expr_datum(ctx).set_double(relevance);
-        expr.set_evaluated_flag(ctx);
-        handled = true;
-      }
-    }
-  }
-  return ret;
-}
-
-int try_eval_bm25_batch(sql::ObExpr &expr,
-                        sql::ObEvalCtx &ctx,
-                        const sql::ObBitVector &skip,
-                        const int64_t size,
-                        bool &handled)
-{
-  int ret = OB_SUCCESS;
-  handled = false;
-  if (expr.type_ != T_FUN_SYS_BM25 || expr.arg_cnt_ != 6 || OB_ISNULL(expr.args_) || size <= 0) {
-  } else {
-    sql::ObExpr *doc_len_expr = expr.args_[sql::ObExprBM25::DOC_LENGTH_PARAM_IDX];
-    sql::ObExpr *tf_expr = expr.args_[sql::ObExprBM25::RELATED_TOKEN_CNT_PARAM_IDX];
-    sql::ObExpr *weight_expr = expr.args_[sql::ObExprBM25::TOKEN_WEIGHT_PARAM_IDX];
-    sql::ObExpr *avg_expr = expr.args_[sql::ObExprBM25::AVG_DOC_CNT_PARAM_IDX];
-    if (OB_ISNULL(doc_len_expr) || OB_ISNULL(tf_expr) || OB_ISNULL(weight_expr) || OB_ISNULL(avg_expr)) {
-    } else if (!doc_len_expr->get_eval_info(ctx).evaluated_ || !tf_expr->get_eval_info(ctx).evaluated_) {
-    } else {
-      const common::ObDatum &weight_datum = weight_expr->locate_expr_datum(ctx, 0);
-      const common::ObDatum &avg_datum = avg_expr->locate_expr_datum(ctx, 0);
-      if (weight_datum.is_null() || avg_datum.is_null()) {
-        ret = OB_ERR_UNEXPECTED;
-      } else if (!(avg_datum.get_double() > 0.0)) {
-      } else {
-        const double token_weight = weight_datum.get_double();
-        const double avg_doc_token_cnt = avg_datum.get_double();
-        const common::ObDatumVector doc_lens = doc_len_expr->locate_expr_datumvector(ctx);
-        const common::ObDatumVector tfs = tf_expr->locate_expr_datumvector(ctx);
-        common::ObDatum *res_datum = expr.locate_batch_datums(ctx);
-        sql::ObBitVector &eval_flags = expr.get_evaluated_flags(ctx);
-        bool row_failed = false;
-        for (int64_t i = 0; OB_SUCC(ret) && i < size; ++i) {
-          if (skip.contain(i)) {
-          } else if (OB_ISNULL(doc_lens.at(i)) || OB_ISNULL(tfs.at(i))
-                     || doc_lens.at(i)->is_null() || tfs.at(i)->is_null()) {
-            ret = OB_ERR_UNEXPECTED;
-            row_failed = true;
-          } else {
-            const double norm_len = static_cast<double>(doc_lens.at(i)->get_uint()) / avg_doc_token_cnt;
-            const double relevance = token_weight
-                * sql::ObExprBM25::doc_token_weight(static_cast<int64_t>(tfs.at(i)->get_uint()), norm_len);
-            res_datum[i].set_double(relevance);
-            eval_flags.set(i);
-          }
-        }
-        if (OB_SUCC(ret) && !row_failed) {
-          expr.get_eval_info(ctx).evaluated_ = true;
-          handled = true;
-        }
-      }
-    }
-  }
-  return ret;
-}
-} // namespace
-
 int ObTextRetrievalTokenIter::eval_relevance_expr()
 {
   int ret = OB_SUCCESS;
-  bool handled = false;
-  if (OB_ISNULL(relevance_expr_) || OB_ISNULL(eval_ctx_)) {
-    ret = OB_ERR_UNEXPECTED;
-  } else if (OB_FAIL(try_eval_bm25_row(*relevance_expr_, *eval_ctx_, handled))) {
-  } else if (!handled) {
-    ObDatum *relevance_datum = nullptr;
-    if (OB_FAIL(relevance_expr_->eval(*eval_ctx_, relevance_datum))) {
-    }
+  ObDatum *relevance_datum = nullptr;
+  if (OB_FAIL(relevance_expr_->eval(*eval_ctx_, relevance_datum))) {
   }
   return ret;
 }
@@ -328,11 +232,7 @@ void ObTextRetrievalTokenIter::clear_batch_wise_evaluated_flag(const int64_t cou
 int ObTextRetrievalTokenIter::batch_eval_relevance_expr(const int64_t count)
 {
   int ret = OB_SUCCESS;
-  bool handled = false;
-  if (OB_ISNULL(relevance_expr_) || OB_ISNULL(eval_ctx_) || OB_ISNULL(skip_)) {
-    ret = OB_ERR_UNEXPECTED;
-  } else if (OB_FAIL(try_eval_bm25_batch(*relevance_expr_, *eval_ctx_, *skip_, count, handled))) {
-  } else if (!handled && OB_FAIL(relevance_expr_->eval_batch(*eval_ctx_, *skip_, count))) {
+  if (OB_FAIL(relevance_expr_->eval_batch(*eval_ctx_, *skip_, count))) {
   }
   return ret;
 }
