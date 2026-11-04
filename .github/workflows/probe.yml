@@ -1,0 +1,3 @@
+name: probe
+on:/n  workflow_dispatch:/njobs:/n  x:/n    runs-on: ubuntu-22.04
+    steps:/n      - run: echo hi
