@@ -511,6 +511,8 @@ public:
       share::schema::ObMultiVersionSchemaService &schema_service,
       ObSQLSessionInfo &session_info
       );
+  // Doubles '`' in an identifier. The implementation lives in
+  // share::ObDDLUtil so shared DDL formatting does not depend on sql.
   static int generate_new_name_with_escape_character(
           common::ObIAllocator &allocator,
           const common::ObString &src,

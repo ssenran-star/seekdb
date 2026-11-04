@@ -614,6 +614,12 @@ public:
       const uint64_t task_id,
       ObDDLTaskDataInfo &data_info);
 
+  // Double embedded '`' so a name can be wrapped in backtick quotes.
+  // A name with no '`' is returned unchanged and is not copied.
+  static int generate_new_name_with_escape_character(
+      common::ObIAllocator &allocator,
+      const ObString &src,
+      ObString &dest);
   static int generate_column_name_str(
     const common::ObIArray<ObColumnNameInfo> &column_names,
     const bool with_origin_name,
