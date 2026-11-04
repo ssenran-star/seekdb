@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL
 #include "ob_dml_stmt_printer.h"
+#include "sql/engine/basic/ob_file_sql_op.h"
 #include "sql/printer/ob_select_stmt_printer.h"
 #include "sql/ob_sql_context.h"
 #include "sql/resolver/dml/ob_del_upd_stmt.h"
@@ -350,6 +351,26 @@ int ObDMLStmtPrinter::print_table(const TableItem *table_item,
     }
     case TableItem::TEMP_TABLE: {
       PRINT_TABLE_NAME(print_params_, table_item);
+      if (OB_SUCC(ret) && !table_item->alias_name_.empty()) {
+        DATA_PRINTF(" ");
+        PRINT_IDENT_WITH_QUOT(table_item->alias_name_);
+      }
+      break;
+    }
+    case TableItem::FILE_SQL_TABLE: {
+      const char *fn = "read_csv";
+      if (OB_NOT_NULL(table_item->file_sql_def_)) {
+        if (OB_FILE_SQL_JSONL == table_item->file_sql_def_->kind_) {
+          fn = "read_json";
+        } else if (OB_FILE_SQL_PARQUET == table_item->file_sql_def_->kind_) {
+          fn = "read_parquet";
+        } else if (OB_FILE_SQL_GLOB == table_item->file_sql_def_->kind_) {
+          fn = "glob";
+        }
+      }
+      DATA_PRINTF("%s('%.*s')", fn,
+                  OB_NOT_NULL(table_item->file_sql_def_) ? table_item->file_sql_def_->path_.length() : 0,
+                  OB_NOT_NULL(table_item->file_sql_def_) ? table_item->file_sql_def_->path_.ptr() : "");
       if (OB_SUCC(ret) && !table_item->alias_name_.empty()) {
         DATA_PRINTF(" ");
         PRINT_IDENT_WITH_QUOT(table_item->alias_name_);

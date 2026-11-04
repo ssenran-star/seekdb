@@ -32,6 +32,7 @@
 #include "sql/optimizer/ob_log_select_into.h"
 #include "sql/optimizer/ob_log_expr_values.h"
 #include "sql/optimizer/ob_log_function_table.h"
+#include "sql/optimizer/ob_log_file_sql.h"
 #include "sql/optimizer/ob_log_json_table.h"
 #include "sql/rewrite/ob_transform_utils.h"
 #include "sql/optimizer/ob_log_exchange.h"
@@ -2225,6 +2226,30 @@ int ObLogPlan::check_need_gen_join_path(const ObJoinOrder *left_tree,
   return ret;
 }
 
+int ObLogPlan::allocate_file_sql_path(FileSqlPath *file_sql_path,
+                                      ObLogicalOperator *&out_access_path_op)
+{
+  int ret = OB_SUCCESS;
+  ObLogFileSql *op = NULL;
+  const TableItem *table_item = NULL;
+  if (OB_ISNULL(file_sql_path) || OB_ISNULL(get_stmt())
+      || OB_ISNULL(table_item = get_stmt()->get_table_item_by_id(file_sql_path->table_id_))) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_ISNULL(op = static_cast<ObLogFileSql *>(get_log_op_factory().allocate(*this, LOG_FILE_SQL)))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else {
+    op->set_table_id(file_sql_path->table_id_);
+    op->set_table_name(table_item->get_table_name());
+    if (OB_FAIL(append(op->get_filter_exprs(), file_sql_path->filter_))) {
+    } else if (OB_FAIL(op->compute_property(file_sql_path))) {
+    } else if (OB_FAIL(op->pick_out_startup_filters())) {
+    } else {
+      out_access_path_op = op;
+    }
+  }
+  return ret;
+}
+
 int ObLogPlan::allocate_function_table_path(FunctionTablePath *func_table_path,
                                             ObLogicalOperator *&out_access_path_op)
 {
@@ -3498,6 +3523,10 @@ int ObLogPlan::create_plan_tree_from_path(Path *path,
     } else if (path->is_function_table_path()) {
       FunctionTablePath *func_table_path = static_cast<FunctionTablePath *>(path);
       if (OB_FAIL(allocate_function_table_path(func_table_path, op))) {
+      } else { /* Do nothing */ }
+    } else if (path->is_file_sql_path()) {
+      FileSqlPath *file_sql_path = static_cast<FileSqlPath *>(path);
+      if (OB_FAIL(allocate_file_sql_path(file_sql_path, op))) {
       } else { /* Do nothing */ }
     } else if (path->is_json_table_path()) {
       JsonTablePath *json_table_path = static_cast<JsonTablePath *>(path);
@@ -6830,6 +6859,8 @@ int ObLogPlan::allocate_select_into_as_top(ObLogicalOperator *&old_top)
       select_into->set_escaped_cht(into_item->escaped_cht_);
       select_into->set_cs_type(into_item->cs_type_);
       select_into->set_external_properties(into_item->external_properties_);
+      select_into->set_file_sql_header_line(into_item->file_sql_header_line_);
+      select_into->set_file_sql_nullstr(into_item->file_sql_nullstr_);
       select_into->set_child(ObLogicalOperator::first_child, old_top);
       // compute property
       if (OB_FAIL(select_into->compute_property())) {

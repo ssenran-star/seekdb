@@ -803,7 +803,7 @@ int ObDelUpdResolver::set_base_table_for_updatable_view(TableItem &table_item,
             ret = OB_ERR_ILLEGAL_VIEW_UPDATE;
           } else if (new_table_item->is_values_table()) {
             ret = dml->is_insert_stmt() ? OB_ERR_NON_INSERTABLE_TABLE : OB_ERR_NON_UPDATABLE_TABLE;
-          } else if (new_table_item->is_json_table()) {
+          } else if (new_table_item->is_json_table() || new_table_item->is_file_sql_table()) {
             ret = OB_ERR_NON_INSERTABLE_TABLE;
           } else {
             ret = OB_ERR_UNEXPECTED;

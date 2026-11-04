@@ -29,6 +29,7 @@
 #include "sql/optimizer/ob_log_insert.h"
 #include "sql/optimizer/ob_log_expr_values.h"
 #include "sql/optimizer/ob_log_function_table.h"
+#include "sql/optimizer/ob_log_file_sql.h"
 #include "sql/optimizer/ob_log_json_table.h"
 #include "sql/optimizer/ob_log_values.h"
 #include "sql/optimizer/ob_log_subplan_filter.h"
@@ -95,6 +96,7 @@
 #include "sql/engine/pdml/static/ob_px_sstable_insert_op.h"
 #include "sql/engine/basic/ob_select_into_op.h"
 #include "sql/engine/basic/ob_function_table_op.h"
+#include "sql/engine/basic/ob_file_sql_op.h"
 #include "sql/engine/basic/ob_json_table_op.h"
 #include "sql/engine/dml/ob_table_insert_op.h"
 #include "sql/engine/basic/ob_stat_collector_op.h"
@@ -5487,6 +5489,9 @@ int ObStaticEngineCG::generate_spec(ObLogSelectInto &op, ObSelectIntoSpec &spec,
       spec.parallel_ = op.get_parallel();
       spec.is_overwrite_ = op.get_is_overwrite();
       spec.plan_->need_drive_dml_query_ = true;
+      if (OB_FAIL(ob_write_string(alloc, op.get_file_sql_header_line(), spec.file_sql_header_line_))) {
+      } else if (OB_FAIL(ob_write_string(alloc, op.get_file_sql_nullstr(), spec.file_sql_nullstr_))) {
+      }
     }
   }
   return ret;
@@ -5527,6 +5532,67 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
         OZ (generate_rt_expr(*col_item->expr_, rt_expr));
         OZ (spec.column_exprs_.push_back(rt_expr));
       }
+    }
+  }
+  return ret;
+}
+
+int ObStaticEngineCG::generate_spec(ObLogFileSql &op, ObFileSqlSpec &spec, const bool in_root_job)
+{
+  UNUSED(in_root_job);
+  int ret = OB_SUCCESS;
+  ObIAllocator &alloc = phy_plan_->get_allocator();
+  const ObDMLStmt *stmt = op.get_stmt();
+  const TableItem *table = NULL;
+  const ObFileSqlTableDef *def = NULL;
+  if (OB_ISNULL(stmt)
+      || OB_ISNULL(table = stmt->get_table_item_by_id(op.get_table_id()))
+      || OB_ISNULL(def = table->file_sql_def_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(spec.column_exprs_.init(def->col_cnt_))) {
+  } else {
+    ObObj path_obj;
+    path_obj.set_varchar(def->path_);
+    path_obj.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+    char flags_buf[256];
+    int64_t flag_len = def->col_cnt_;
+    char *flags_store = flags_buf;
+    if (flag_len > static_cast<int64_t>(sizeof(flags_buf))) {
+      flags_store = static_cast<char *>(alloc.alloc(flag_len));
+    }
+    if (flag_len > 0 && OB_ISNULL(flags_store)) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    }
+    for (int64_t i = 0; OB_SUCC(ret) && i < def->col_cnt_; ++i) {
+      flags_store[i] = def->cols_[i].is_bool_ ? '1' : '0';
+    }
+    ObObj flags_obj;
+    if (OB_FAIL(ret)) {
+    } else if (OB_FAIL(deep_copy_obj(alloc, path_obj, spec.path_))) {
+    } else {
+      flags_obj.set_varchar(flags_store, static_cast<int32_t>(flag_len));
+      flags_obj.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+      if (OB_FAIL(deep_copy_obj(alloc, flags_obj, spec.bool_flags_))) {
+      } else {
+        spec.kind_ = def->kind_;
+      }
+    }
+    for (int64_t i = 0; OB_SUCC(ret) && i < stmt->get_column_size(); ++i) {
+      const ColumnItem *col_item = stmt->get_column_item(i);
+      ObExpr *rt_expr = NULL;
+      if (OB_ISNULL(col_item) || OB_ISNULL(col_item->expr_)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (col_item->table_id_ == op.get_table_id()) {
+        if (OB_FAIL(mark_expr_self_produced(col_item->expr_))) {
+        } else if (OB_FAIL(generate_rt_expr(*col_item->expr_, rt_expr))) {
+        } else if (OB_FAIL(spec.column_exprs_.push_back(rt_expr))) {
+        }
+      }
+    }
+    if (OB_SUCC(ret) && spec.column_exprs_.count() != def->col_cnt_) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("file sql column expr count mismatch", K(ret), K(spec.column_exprs_.count()),
+               K(def->col_cnt_));
     }
   }
   return ret;
@@ -6117,6 +6183,10 @@ int ObStaticEngineCG::get_phy_op_type(ObLogicalOperator &log_op,
     }
     case log_op_def::LOG_FUNCTION_TABLE: {
       type = PHY_FUNCTION_TABLE;
+      break;
+    }
+    case log_op_def::LOG_FILE_SQL: {
+      type = PHY_FILE_SQL;
       break;
     }
     case log_op_def::LOG_JSON_TABLE: {

@@ -129,6 +129,8 @@ struct ObValuesTableDef {
                        K(access_type_), K(is_const_), K(column_types_));
 };
 
+struct ObFileSqlTableDef;
+
 struct TableItem
 {
   TableItem()
@@ -156,6 +158,7 @@ struct TableItem
     table_type_ = MAX_TABLE_TYPE;
     values_table_def_ = NULL;
     sample_info_ = nullptr;
+    file_sql_def_ = nullptr;
   }
 
   virtual TO_STRING_KV(N_TID, table_id_,
@@ -190,6 +193,7 @@ struct TableItem
     JSON_TABLE,
     VALUES_TABLE,
     LATERAL_TABLE,
+    FILE_SQL_TABLE,
   };
 
   /**
@@ -224,6 +228,7 @@ struct TableItem
   bool is_function_table() const { return FUNCTION_TABLE == type_; }
   bool is_json_table() const { return JSON_TABLE == type_; }  // json_table_def_->table_type_ == MulModeTableType::OB_ORA_JSON_TABLE_TYPE
   bool is_values_table() const { return VALUES_TABLE == type_; }//used to mark values statement: values row(1,2), row(3,4);
+  bool is_file_sql_table() const { return FILE_SQL_TABLE == type_; }
 
   bool is_lateral_table() const { return LATERAL_TABLE == type_; }
   bool is_extended_all_or_user_sys_view() const
@@ -303,6 +308,8 @@ struct TableItem
   ObJsonTableDef *json_table_def_;
   // values table
   ObValuesTableDef *values_table_def_;
+  // local file table (read_csv / read_json / read_parquet / glob)
+  ObFileSqlTableDef *file_sql_def_;
   // sample scan infos
   SampleInfo *sample_info_;
 };

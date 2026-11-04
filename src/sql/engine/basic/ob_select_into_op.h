@@ -71,7 +71,9 @@ public:
       parallel_(1),
       buffer_size_(DEFAULT_BUFFER_SIZE),
       is_overwrite_(false),
-      external_properties_(alloc)
+      external_properties_(alloc),
+      file_sql_header_line_(),
+      file_sql_nullstr_()
   {
   }
 
@@ -91,6 +93,8 @@ public:
   int64_t buffer_size_;
   bool is_overwrite_;
   ObExternalFileFormat::StringData external_properties_;
+  common::ObString file_sql_header_line_;
+  common::ObString file_sql_nullstr_;
   static const int64_t DEFAULT_MAX_FILE_SIZE = 256LL * 1024 * 1024;
   static const int64_t DEFAULT_BUFFER_SIZE = 1LL * 1024 * 1024;
 };
@@ -124,6 +128,7 @@ public:
       use_shared_buf_(false),
       has_compress_(false),
       external_properties_(),
+      file_sql_header_written_(false),
       format_type_(ObExternalFileFormat::FormatType::CSV_FORMAT),
       block_id_(0),
       need_commit_(true)
@@ -202,6 +207,7 @@ private:
   int get_row_str(const int64_t buf_len, bool is_first_row, char *buf, int64_t &pos);
   int into_dumpfile(ObExternalFileWriter *data_writer);
   int into_outfile(ObExternalFileWriter *data_writer);
+  int write_file_sql_header(ObExternalFileWriter *data_writer);
   int into_outfile_batch_csv(const ObBatchRows &brs, ObExternalFileWriter *data_writer);
   int extract_fisrt_wchar_from_varhcar(const ObObj &obj, int32_t &wchar);
   int print_wchar_to_buf(char *buf,
@@ -288,6 +294,7 @@ private:
   int64_t shared_buf_len_;
   bool use_shared_buf_;
   bool has_compress_;
+  bool file_sql_header_written_;
   ObExternalFileFormat external_properties_;
   ObExternalFileFormat::FormatType format_type_;
   uint32_t block_id_;

@@ -476,6 +476,10 @@ int ObResolver::resolve(IsPrepared if_prepared, const ParseNode &parse_tree, ObS
         REGISTER_STMT_RESOLVER(Explain);
         break;
       }
+      case T_DESCRIBE_QUERY: {
+        REGISTER_STMT_RESOLVER(DescribeQuery);
+        break;
+      }
       case T_ALTER_SYSTEM_SET: {
         REGISTER_STMT_RESOLVER(AlterSystemSet);
         break;
