@@ -1,0 +1,58 @@
+name: seekdb-build-check
+
+on:
+  push:
+    branches: [ci-build]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /usr/share/swift 2>/dev/null || true
+          df -h /
+
+      - name: Install base toolchain
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq git wget rpm rpm2cpio cpio make build-essential \
+            binutils m4 libtool-bin libncurses5 python3
+
+      - name: Init deps and cmake (validates bison grammar)
+        run: |
+          ./build.sh release --init 2>&1 | tail -60
+
+      - name: Build
+        continue-on-error: true
+        run: |
+          if [ -f ~/.bashrc ]; then source ~/.bashrc; fi
+          cd build_release
+          make -j4 -k 2>&1 | tee /tmp/build.log | tail -100
+          echo "=== BUILD_EXIT=${PIPESTATUS[0]} ==="
+
+      - name: Summarize errors
+        if: always()
+        run: |
+          if [ -f /tmp/build.log ]; then
+            echo "----- error lines -----"
+            grep -nE "error:|Error [0-9]|undefined reference|No such file" /tmp/build.log | head -80
+            echo "----- tail -----"
+            tail -30 /tmp/build.log
+          else
+            echo "no build log (configure stage failed)"
+          fi
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /tmp/build.log
+          if-no-files-found: ignore
